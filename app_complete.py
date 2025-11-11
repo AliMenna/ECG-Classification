@@ -265,51 +265,55 @@ if uploaded_file is not None:
                 except Exception as e:
                     st.error(f"⚠️ Error during classification: {e}")
 
-            # -------------------------------------------------
-            # TAB 3 — Typical Waveforms
-            # -------------------------------------------------
-            with tab_compare:
-                st.subheader("Compare with Typical Class Waveforms")
+                    # -------------------------------------------------
+        # TAB 3 — Typical class waveforms
+        # -------------------------------------------------
+        with tab_compare:
+            st.subheader("Compare with Typical Class Waveforms")
 
-                typical_shapes = {}
-                for label in CLASS_LABELS.values():
-                    file_name = f"avg_{label.split()[0]}.npy"
-                    if os.path.exists(file_name):
-                        typical_shapes[label] = np.load(file_name)
+            typical_shapes = {}
+            for label in CLASS_LABELS.values():
+                file_name = f"avg_{label.split()[0]}.npy"
+                if os.path.exists(file_name):
+                    typical_shapes[label] = np.load(file_name)
 
-                if typical_shapes:
-                    selected_classes = st.multiselect(
-                        "Select classes to compare:",
-                        list(typical_shapes.keys()),
-                        default=[CLASS_LABELS[pred_class]] if 'pred_class' in locals() else None
-                    )
+            if typical_shapes:
+                selected_classes = st.multiselect(
+                    "Select classes to compare:",
+                    list(typical_shapes.keys()),
+                    default=[list(CLASS_LABELS.values())[pred_class]]
+                )
 
-                    fig_cmp = go.Figure()
-                    fig_cmp.add_trace(go.Scatter(y=signal, mode="lines", name="Uploaded ECG", line=dict(color="black")))
-                    for c in selected_classes:
-                        fig_cmp.add_trace(go.Scatter(y=typical_shapes[c], mode="lines", name=f"Typical {c}"))
-                    fig_cmp.update_layout(
-                        title="Comparison with Typical ECG Patterns",
-                        xaxis_title="Samples",
-                        yaxis_title="Amplitude",
-                        height=300
-                    )
-                    st.plotly_chart(fig_cmp, use_container_width=True)
-                else:
-                    st.warning("⚠️ No typical waveform files found (e.g., avg_N.npy).")
+                fig_cmp = go.Figure()
+                fig_cmp.add_trace(go.Scatter(y=signal, mode="lines",
+                                             name="Uploaded ECG", line=dict(color="black")))
 
+                for c in selected_classes:
+                    fig_cmp.add_trace(go.Scatter(y=typical_shapes[c], mode="lines", name=f"Typical {c}"))
 
-            # -------------------------------------------------
-            # TAB 4 — Model Info
-            # -------------------------------------------------
-            with tab_model:
-                st.markdown("""
-                ### 📊 Technical Information
-                - **Architecture:** 1D CNN (3 convolutional + 2 fully connected layers)  
-                - **Dataset:** MIT-BIH Arrhythmia  
-                - **Reported accuracy:** ~83%  
-                - **AUC average:** ≈ 0.95  
-                - **Frameworks:** PyTorch, Streamlit, Plotly  
-                """)
+                fig_cmp.update_layout(
+                    title="Comparison with Typical ECG Patterns",
+                    xaxis_title="Samples",
+                    yaxis_title="Amplitude",
+                    height=300
+                )
+                st.plotly_chart(fig_cmp, use_container_width=True)
+            else:
+                st.warning("⚠️ No typical waveform files found (e.g., avg_N.npy).")
+
+        # -------------------------------------------------
+        # TAB 4 — Model & Performance Info
+        # -------------------------------------------------
+        with tab_model:
+            st.subheader("Model & Performance Information")
+            st.markdown("""
+            ### 🧠 Technical Details
+            - **Architecture:** 1D Convolutional Neural Network (3 conv + 2 fully-connected layers)  
+            - **Dataset:** MIT-BIH Arrhythmia Database  
+            - **Reported accuracy:** ~83%  
+            - **AUC average:** ~0.95  
+            - **Frameworks:** PyTorch, Streamlit, Plotly  
+            """)
+
 
 
