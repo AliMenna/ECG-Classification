@@ -151,16 +151,10 @@ uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
 
 if uploaded_file is not None:
     try:
-        # Load the CSV
         df = pd.read_csv(uploaded_file)
-
-        # Drop possible label columns if they exist
         df = df.drop(columns=['label', 'target', 'class'], errors='ignore')
-
-        # Keep only numeric columns
         numeric_df = df.select_dtypes(include=[np.number])
 
-        # Check that the file contains enough data
         if numeric_df.empty:
             st.error("❌ No numeric data found in this CSV file. Please upload a valid ECG signal file.")
         else:
@@ -169,14 +163,9 @@ if uploaded_file is not None:
             # -------------------------------------------------
             # Select which row (beat) to analyze
             # -------------------------------------------------
-            row_idx = st.slider(
-                "Select the row (heartbeat) to analyze:",
-                0,
-                len(numeric_df) - 1,
-                0
-            )
+            row_idx = st.slider("Select the row (heartbeat) to analyze:",
+                                0, len(numeric_df) - 1, 0)
             signal = numeric_df.iloc[row_idx].values.astype(np.float32)
-            sig_len = len(signal)
 
             # -------------------------------------------------
             # MAIN TABS
@@ -185,20 +174,33 @@ if uploaded_file is not None:
                 ["📈 Signal", "🩺 Classification", "📊 Typical patterns", "ℹ️ Model Info"]
             )
 
-            # TAB 1 - Display ECG signal
+            # TAB 1
             with tab_signal:
                 st.subheader("Selected ECG Signal")
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(y=signal, mode="lines", name="ECG"))
-                fig.update_layout(
-                    xaxis_title="Samples",
-                    yaxis_title="Amplitude",
-                    height=300
-                )
+                fig.update_layout(xaxis_title="Samples", yaxis_title="Amplitude", height=300)
                 st.plotly_chart(fig, use_container_width=True)
+
+            # TAB 2 — Classification and Grad-CAM
+            with tab_result:
+                st.subheader("Classification and Model Explanation")
+
+                if st.button("🔍 Analyze ECG"):
+                    try:
+                        # Prepare input tensor
+                        x = torch.tensor(signal, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+                        with torch.no_grad():
+                            output = model(x)
+                            probs = torch.softmax(output, dim=1).cpu().numpy()[0]
+                            pred_class = int(np.argmax(probs))
+                        st.success(f"Predicted class: {pred_class}")
+                    except Exception as e:
+                        st.error(f"⚠️ Error during classification: {e}")
 
     except Exception as e:
         st.error(f"⚠️ Error loading file: {e}")
+
 
             # -------------------------------------------------
             # TAB 2 — Classification and Grad-CAM
