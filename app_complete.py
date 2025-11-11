@@ -143,41 +143,61 @@ st.set_page_config(page_title="ECG Arrhythmia Classifier", layout="wide")
 st.title("💓 ECG Arrhythmia Classifier")
 st.markdown("Upload an ECG trace in **CSV** format to automatically classify arrhythmia and visualize model interpretation.")
 
+# -------------------------------------------------
+# 📤 FILE UPLOAD AND DATA PREVIEW
+# -------------------------------------------------
+st.subheader("Upload an ECG CSV file")
 uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
 
 if uploaded_file is not None:
-    # -------------------------------------------------
-    # Read data
-    # -------------------------------------------------
-    df = pd.read_csv(uploaded_file, header=None)
-    if 'target' in df.columns:
-        df = df.drop(columns=['target'])
+    try:
+        # Load the CSV
+        df = pd.read_csv(uploaded_file)
 
-    st.success(f"File successfully uploaded. Shape: {df.shape}")
-    with st.expander("Preview data"):
-        st.dataframe(df.head(), use_container_width=True)
+        # Drop possible label columns if they exist
+        df = df.drop(columns=['label', 'target', 'class'], errors='ignore')
 
-    # Select which row (beat) to analyze
-    row_idx = st.slider("Select the row (heartbeat) to analyze:", 0, len(df) - 1, 0)
-    signal = df.iloc[row_idx].values.astype(np.float32)
-    sig_len = len(signal)
+        # Keep only numeric columns
+        numeric_df = df.select_dtypes(include=[np.number])
 
-    # -------------------------------------------------
-    # MAIN TABS
-    # -------------------------------------------------
-    tab_signal, tab_result, tab_compare, tab_model = st.tabs(
-        ["📈 Signal", "📊 Classification", "🩺 Typical patterns", "🧪 Model Info"]
-    )
+        # Check that the file contains enough data
+        if numeric_df.empty:
+            st.error("❌ No numeric data found in this CSV file. Please upload a valid ECG signal file.")
+        else:
+            st.success(f"✅ File successfully uploaded. Shape: {numeric_df.shape}")
 
-    # -------------------------------------------------
-    # TAB 1 - Display signal
-    # -------------------------------------------------
-    with tab_signal:
-        st.subheader("Selected ECG signal")
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(y=signal, mode="lines", name="ECG"))
-        fig.update_layout(xaxis_title="Samples", yaxis_title="Amplitude", height=300)
-        st.plotly_chart(fig, use_container_width=True)
+            with st.expander("Preview data"):
+                st.dataframe(numeric_df.head(), use_container_width=True)
+
+            # -------------------------------------------------
+            # Row selection
+            # -------------------------------------------------
+            st.subheader("Select the row (heartbeat) to analyze:")
+            row_idx = st.slider("Row index:", 0, len(numeric_df) - 1, 0)
+
+            # Convert selected row to a float32 numpy array
+            signal = numeric_df.iloc[row_idx].values.astype(np.float32)
+            sig_len = len(signal)
+
+            # -------------------------------------------------
+            # Show signal
+            # -------------------------------------------------
+            st.subheader("Selected ECG Signal")
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(y=signal, mode="lines", name="ECG Signal"))
+            fig.update_layout(
+                title="ECG waveform",
+                xaxis_title="Samples",
+                yaxis_title="Amplitude",
+                height=300
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    except Exception as e:
+        st.error(f"⚠️ Error while reading the file: {e}")
+else:
+    st.info("Please upload a CSV file to start the analysis.")
+
 
     # -------------------------------------------------
     # Make prediction
