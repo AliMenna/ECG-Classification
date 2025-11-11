@@ -202,83 +202,68 @@ if uploaded_file is not None:
         st.error(f"⚠️ Error loading file: {e}")
 
 
-            # -------------------------------------------------
-            # TAB 2 — Classification and Grad-CAM
-            # -------------------------------------------------
-            with tab_result:
-                st.subheader("Classification and Model Explanation")
+                   # -------------------------------------------------
+        # TAB 2 — Classification and Grad-CAM
+        # -------------------------------------------------
+        with tab_result:
+            st.subheader("Classification and Model Explanation")
 
-                if st.button("🔍 Analyze ECG"):
-                    try:
-                        # Prepare input tensor
-                        x = torch.tensor(signal, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+            if st.button("🔍 Analyze ECG"):
+                try:
+                    # Prepare input tensor
+                    x = torch.tensor(signal, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
 
-                        # Forward pass
-                        with torch.no_grad():
-                            output = model(x)
-                            probs = torch.softmax(output, dim=1).cpu().numpy()[0]
-                            pred_class = int(np.argmax(probs))
+                    # Forward pass
+                    with torch.no_grad():
+                        output = model(x)
+                        probs = torch.softmax(output, dim=1).cpu().numpy()[0]
+                        pred_class = int(np.argmax(probs))
 
-                        # Show prediction results
-                        col_left, col_right = st.columns([1.3, 1])
+                    # Show prediction results
+                    col_left, col_right = st.columns([1.3, 1])
 
-                        with col_left:
-                            bar_fig = px.bar(
-                                x=[f"Class {i}" for i in range(len(probs))],
-                                y=probs,
-                                title="Prediction Probabilities",
-                                labels={"x": "Class", "y": "Probability"}
-                            )
-                            bar_fig.update_yaxes(range=[0, 1])
-                            st.plotly_chart(bar_fig, use_container_width=True)
-
-                        with col_right:
-                            st.markdown(f"### 🫀 Predicted Class: **Class {pred_class}**")
-                            if 'CLASS_LABELS' in globals() and pred_class < len(CLASS_LABELS):
-                                st.info(CLASS_LABELS[pred_class])
-                            else:
-                                st.info("Arrhythmia class description not available.")
-
-                        # Download CSV report
-                        report_df = pd.DataFrame({
-                            "row": [row_idx],
-                            "predicted_class": [pred_class],
-                            "probabilities": [probs.tolist()]
-                        })
-                        st.download_button(
-                            "⬇️ Download Report (CSV)",
-                            report_df.to_csv(index=False),
-                            file_name=f"ecg_report_row_{row_idx}.csv",
-                            mime="text/csv"
+                    with col_left:
+                        bar_fig = px.bar(
+                            x=[f"Class {i}" for i in range(len(probs))],
+                            y=probs,
+                            title="Prediction Probabilities",
+                            labels={"x": "Class", "y": "Probability"}
                         )
+                        bar_fig.update_yaxes(range=[0, 1])
+                        st.plotly_chart(bar_fig, use_container_width=True)
 
-                        # -------------------------------------------------
-                        # 🔎 Grad-CAM Visualization
-                        # -------------------------------------------------
-                        st.markdown("### 🔍 Model Attention (Grad-CAM 1D)")
-                        cam = grad_cam_1d(model, x, pred_class)
+                    with col_right:
+                        st.markdown(f"### 🫀 Predicted Class: **Class {pred_class}**")
+                        if 'CLASS_LABELS' in globals() and pred_class < len(CLASS_LABELS):
+                            st.info(CLASS_LABELS[pred_class])
+                        else:
+                            st.info("Arrhythmia class description not available.")
 
-                        # Interpolate Grad-CAM if lengths differ
-                        if len(cam) != len(signal):
-                            cam = np.interp(np.linspace(0, 1, len(signal)),
-                                            np.linspace(0, 1, len(cam)),
-                                            cam)
+                    # -------------------------------------------------
+                    # Grad-CAM Visualization
+                    # -------------------------------------------------
+                    st.markdown("### 🔍 Model Attention (Grad-CAM 1D)")
+                    cam = grad_cam_1d(model, x, pred_class)
 
-                        fig_cam = go.Figure()
-                        fig_cam.add_trace(go.Scatter(y=signal, mode="lines", name="ECG Signal", line=dict(color="black")))
-                        fig_cam.add_trace(go.Scatter(y=cam * max(signal), mode="lines",
-                                                     name="Grad-CAM Importance", line=dict(color="red")))
-                        fig_cam.update_layout(
-                            title="ECG Signal with Model Attention (Grad-CAM)",
-                            xaxis_title="Samples",
-                            yaxis_title="Amplitude / Importance",
-                            height=300
-                        )
-                        st.plotly_chart(fig_cam, use_container_width=True)
+                    if len(cam) != len(signal):
+                        cam = np.interp(np.linspace(0, 1, len(signal)),
+                                        np.linspace(0, 1, len(cam)),
+                                        cam)
 
-                    except Exception as e:
-                        st.error(f"⚠️ Error during classification: {e}")
+                    fig_cam = go.Figure()
+                    fig_cam.add_trace(go.Scatter(y=signal, mode="lines", name="ECG Signal", line=dict(color="black")))
+                    fig_cam.add_trace(go.Scatter(y=cam * max(signal), mode="lines",
+                                                 name="Grad-CAM Importance", line=dict(color="red")))
+                    fig_cam.update_layout(
+                        title="ECG Signal with Model Attention (Grad-CAM)",
+                        xaxis_title="Samples",
+                        yaxis_title="Amplitude / Importance",
+                        height=300
+                    )
+                    st.plotly_chart(fig_cam, use_container_width=True)
 
+                except Exception as e:
+                    st.error(f"⚠️ Error during classification: {e}")
 
             # -------------------------------------------------
             # TAB 3 — Typical Waveforms
