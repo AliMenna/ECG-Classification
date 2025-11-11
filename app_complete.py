@@ -166,37 +166,37 @@ if uploaded_file is not None:
         else:
             st.success(f"✅ File successfully uploaded. Shape: {numeric_df.shape}")
 
-            with st.expander("Preview data"):
-                st.dataframe(numeric_df.head(), use_container_width=True)
+    # -------------------------------------------------
+    # Select which row (beat) to analyze
+    # -------------------------------------------------
+    row_idx = st.slider(
+        "Select the row (heartbeat) to analyze:",
+        0,
+        len(numeric_df) - 1,
+        0
+    )
+    signal = numeric_df.iloc[row_idx].values.astype(np.float32)
+    sig_len = len(signal)
 
-            # -------------------------------------------------
-            # Row selection
-            # -------------------------------------------------
-            st.subheader("Select the row (heartbeat) to analyze:")
-            row_idx = st.slider("Row index:", 0, len(numeric_df) - 1, 0)
+    # -------------------------------------------------
+    # MAIN TABS
+    # -------------------------------------------------
+    tab_signal, tab_result, tab_compare, tab_model = st.tabs(
+        ["📈 Signal", "🩺 Classification", "📊 Typical patterns", "ℹ️ Model Info"]
+    )
 
-            # Convert selected row to a float32 numpy array
-            signal = numeric_df.iloc[row_idx].values.astype(np.float32)
-            sig_len = len(signal)
+    # TAB 1 - Display ECG signal
+    with tab_signal:
+        st.subheader("Selected ECG Signal")
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(y=signal, mode="lines", name="ECG"))
+        fig.update_layout(
+            xaxis_title="Samples",
+            yaxis_title="Amplitude",
+            height=300
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
-            # -------------------------------------------------
-            # Show signal
-            # -------------------------------------------------
-            st.subheader("Selected ECG Signal")
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(y=signal, mode="lines", name="ECG Signal"))
-            fig.update_layout(
-                title="ECG waveform",
-                xaxis_title="Samples",
-                yaxis_title="Amplitude",
-                height=300
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-    except Exception as e:
-        st.error(f"⚠️ Error while reading the file: {e}")
-else:
-    st.info("Please upload a CSV file to start the analysis.")
 
 
 # -------------------------------------------------
