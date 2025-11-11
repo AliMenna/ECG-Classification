@@ -65,11 +65,11 @@ model = load_model()
 
 # Class labels and medical descriptions
 CLASS_LABELS = {
-    0: "Normal (N)",
-    1: "Supraventricular (S)",
-    2: "Ventricular (V)",
-    3: "Fusion (F)",
-    4: "Unknown (Q)"
+    0: "Fusion (F)",
+    1: "Normal (N)",
+    2: "Unknown (Q)",
+    3: "Supraventricular (S)",
+    4: "Ventricular (V)"
 }
 
 CLASS_DESC = {
