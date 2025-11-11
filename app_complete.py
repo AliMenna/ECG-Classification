@@ -15,24 +15,28 @@ class ECGCNN(nn.Module):
     def __init__(self, num_classes=5):
         super(ECGCNN, self).__init__()
 
-        self.conv1 = nn.Conv1d(1, 32, kernel_size=7, padding=3)
+        # First convolutional block
+        self.conv1 = nn.Conv1d(in_channels=1, out_channels=32, kernel_size=7, padding=3)
         self.bn1 = nn.BatchNorm1d(32)
         self.pool1 = nn.MaxPool1d(2)
 
+        # Second convolutional block
         self.conv2 = nn.Conv1d(32, 64, kernel_size=5, padding=2)
         self.bn2 = nn.BatchNorm1d(64)
         self.pool2 = nn.MaxPool1d(2)
 
+        # Third convolutional block
         self.conv3 = nn.Conv1d(64, 128, kernel_size=3, padding=1)
         self.bn3 = nn.BatchNorm1d(128)
         self.pool3 = nn.MaxPool1d(2)
 
-        # Input length 180 -> 90 -> 45 -> 22 after pooling
-        self.fc1 = nn.Linear(128 * 22, 128)
+        # Fully connected layers
+        self.fc1 = nn.Linear(128 * 22, 128)  # 180 -> 90 -> 45 -> 22 after pooling
         self.dropout = nn.Dropout(0.5)
         self.fc2 = nn.Linear(128, num_classes)
 
     def forward(self, x):
+        # Forward propagation
         x = F.relu(self.bn1(self.conv1(x)))
         x = self.pool1(x)
 
@@ -42,11 +46,10 @@ class ECGCNN(nn.Module):
         x = F.relu(self.bn3(self.conv3(x)))
         x = self.pool3(x)
 
-        x = x.view(x.size(0), -1)
+        x = x.view(x.size(0), -1)  # Flatten
         x = self.dropout(F.relu(self.fc1(x)))
         x = self.fc2(x)
         return x
-
 
 # -------------------------------------------------
 # 2. LOAD TRAINED MODEL
@@ -81,55 +84,57 @@ CLASS_DESC = {
 # -------------------------------------------------
 # 3. GRAD-CAM 1D IMPLEMENTATION
 # -------------------------------------------------
-def gradcam_1d(model, input_tensor, target_class, conv_layer_name="conv3", orig_len=180):
+def grad_cam_1d(model, x, target_class):
     """
-    Compute a 1D Grad-CAM for CNN-based ECG classification.
-    Returns a normalized importance map aligned to the input length.
+    Computes Grad-CAM for a 1D CNN model.
+    Args:
+        model: trained CNN model
+        x: input tensor of shape (1, 1, L)
+        target_class: int (true or predicted class)
+    Returns:
+        cam: Grad-CAM activation map (numpy array)
     """
+    model.eval()
+
+    # Hooks to capture activations and gradients
     activations = {}
     gradients = {}
 
-    conv_layer = getattr(model, conv_layer_name)
-
-    def forward_hook(module, inp, out):
-        activations["value"] = out.detach()
+    def forward_hook(module, input, output):
+        activations["value"] = output.detach()
 
     def backward_hook(module, grad_in, grad_out):
         gradients["value"] = grad_out[0].detach()
 
-    # Register hooks
-    h1 = conv_layer.register_forward_hook(forward_hook)
-    h2 = conv_layer.register_backward_hook(backward_hook)
+    # Register hooks on the last conv layer
+    handle_f = model.conv3.register_forward_hook(forward_hook)
+    handle_b = model.conv3.register_backward_hook(backward_hook)
 
-    # Forward and backward passes
-    output = model(input_tensor)
-    score = output[0, target_class]
-    model.zero_grad()
-    score.backward()
+    # Forward + backward
+    x = x.clone().detach().requires_grad_(True)
+    output = model(x)
+    loss = output[0, target_class]
+    loss.backward()
+
+    # Get gradients and activations
+    grads = gradients["value"]          # (B, C, L)
+    acts = activations["value"]         # (B, C, L)
+
+    # Global average pooling of gradients
+    weights = grads.mean(dim=2, keepdim=True)   # (B, C, 1)
+
+    # Weighted sum of activations
+    cam = (weights * acts).sum(dim=1).clamp(min=0)  # ReLU
+    cam = cam.squeeze().cpu().numpy()
+
+    # Normalize for visualization
+    cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
 
     # Remove hooks
-    h1.remove()
-    h2.remove()
+    handle_f.remove()
+    handle_b.remove()
 
-    # Compute Grad-CAM
-    acts = activations["value"]      # (1, C, L')
-    grads = gradients["value"]       # (1, C, L')
-    weights = grads.mean(dim=2, keepdim=True)   # (1, C, 1)
-    cam = (weights * acts).sum(dim=1).squeeze() # (L',)
-
-    cam = torch.relu(cam)
-    cam = cam - cam.min()
-    if cam.max() > 0:
-        cam = cam / cam.max()
-
-    cam = cam.detach().cpu().numpy()
-
-    # Upsample from L' (~22) to original length (180)
-    x_old = np.linspace(0, 1, num=len(cam))
-    x_new = np.linspace(0, 1, num=orig_len)
-    cam_up = np.interp(x_new, x_old, cam)
-    return cam_up
-
+    return cam
 
 # -------------------------------------------------
 # 4. STREAMLIT DASHBOARD
@@ -220,7 +225,8 @@ if uploaded_file is not None:
 
         # ---------------- GRAD-CAM ----------------
         st.markdown("### 🔎 Model Explanation (Grad-CAM 1D)")
-        cam = gradcam_1d(model, x, pred_class, conv_layer_name="conv3", orig_len=sig_len)
+        cam = grad_cam_1d(model, x, pred_class)
+
 
         # Combined ECG + Grad-CAM visualization
         fig_cam = go.Figure()
