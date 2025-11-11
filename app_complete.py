@@ -151,153 +151,148 @@ uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
 
 if uploaded_file is not None:
     try:
+        # Load the CSV
         df = pd.read_csv(uploaded_file)
+
+        # Drop possible label columns if they exist
         df = df.drop(columns=['label', 'target', 'class'], errors='ignore')
+
+        # Keep only numeric columns
         numeric_df = df.select_dtypes(include=[np.number])
 
+        # Check that the file contains enough data
         if numeric_df.empty:
             st.error("❌ No numeric data found in this CSV file. Please upload a valid ECG signal file.")
         else:
             st.success(f"✅ File successfully uploaded. Shape: {numeric_df.shape}")
 
-            # -------------------------------------------------
+            # -------------------------------------------
             # Select which row (beat) to analyze
-            # -------------------------------------------------
-            row_idx = st.slider("Select the row (heartbeat) to analyze:",
-                                0, len(numeric_df) - 1, 0)
+            # -------------------------------------------
+            row_idx = st.slider(
+                "Select the row (heartbeat) to analyze:",
+                0,
+                len(numeric_df) - 1,
+                0
+            )
+
             signal = numeric_df.iloc[row_idx].values.astype(np.float32)
+            sig_len = len(signal)
 
-            # -------------------------------------------------
-            # MAIN TABS
-            # -------------------------------------------------
+            # -------------------------------------------
+            # MAIN TABS (INSIDE THE ELSE)
+            # -------------------------------------------
             tab_signal, tab_result, tab_compare, tab_model = st.tabs(
-                ["📈 Signal", "🩺 Classification", "📊 Typical patterns", "ℹ️ Model Info"]
+                ["📈 Signal", "🧠 Classification", "📊 Typical patterns", "ℹ️ Model Info"]
             )
 
-               # -------------------------------------------------
-    # TAB 1 — Display ECG signal
-    # -------------------------------------------------
-    with tab_signal:
-        st.subheader("Selected ECG Signal")
+            # TAB 1 — Display ECG signal
+            with tab_signal:
+                st.subheader("Selected ECG Signal")
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(y=signal, mode="lines", name="ECG"))
+                fig.update_layout(xaxis_title="Samples", yaxis_title="Amplitude", height=300)
+                st.plotly_chart(fig, use_container_width=True)
 
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(y=signal, mode="lines", name="ECG"))
-        fig.update_layout(
-            xaxis_title="Samples",
-            yaxis_title="Amplitude",
-            height=300
-        )
-        st.plotly_chart(fig, use_container_width=True)
+            # TAB 2 — Classification and Grad-CAM
+            with tab_result:
+                st.subheader("Classification and Model Explanation")
 
-    # -------------------------------------------------
-    # TAB 2 — Classification and Grad-CAM
-    # -------------------------------------------------
-    with tab_result:
-        st.subheader("Classification and Model Explanation")
+                if st.button("🔍 Analyze ECG"):
+                    try:
+                        x = torch.tensor(signal, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+                        with torch.no_grad():
+                            output = model(x)
+                            probs = torch.softmax(output, dim=1).cpu().numpy()[0]
+                            pred_class = int(np.argmax(probs))
 
-        if st.button("🔍 Analyze ECG"):
-            try:
-                # Prepare input tensor
-                x = torch.tensor(signal, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+                        col_left, col_right = st.columns([1.3, 1])
+                        with col_left:
+                            bar_fig = px.bar(
+                                x=[f"Class {i}" for i in range(len(probs))],
+                                y=probs,
+                                title="Prediction Probabilities",
+                                labels={"x": "Class", "y": "Probability"}
+                            )
+                            bar_fig.update_yaxes(range=[0, 1])
+                            st.plotly_chart(bar_fig, use_container_width=True)
 
-                # Forward pass
-                with torch.no_grad():
-                    output = model(x)
-                    probs = torch.softmax(output, dim=1).cpu().numpy()[0]
-                    pred_class = int(np.argmax(probs))
+                        with col_right:
+                            st.markdown(f"### 🫀 Predicted Class: **Class {pred_class}**")
+                            if 'CLASS_LABELS' in globals() and pred_class < len(CLASS_LABELS):
+                                st.info(CLASS_LABELS[pred_class])
+                            else:
+                                st.info("Arrhythmia class description not available.")
 
-                # Show prediction results
-                col_left, col_right = st.columns([1.3, 1])
+                        # Grad-CAM
+                        st.markdown("### 🔍 Model Attention (Grad-CAM 1D)")
+                        cam = grad_cam_1d(model, x, pred_class)
 
-                with col_left:
-                    bar_fig = px.bar(
-                        x=[f"Class {i}" for i in range(len(probs))],
-                        y=probs,
-                        title="Prediction Probabilities",
-                        labels={"x": "Class", "y": "Probability"}
+                        if len(cam) != len(signal):
+                            cam = np.interp(np.linspace(0, 1, len(signal)),
+                                            np.linspace(0, 1, len(cam)),
+                                            cam)
+
+                        fig_cam = go.Figure()
+                        fig_cam.add_trace(go.Scatter(y=signal, mode="lines", name="ECG Signal", line=dict(color="black")))
+                        fig_cam.add_trace(go.Scatter(y=cam * max(signal), mode="lines",
+                                                     name="Grad-CAM Importance", line=dict(color="red")))
+                        fig_cam.update_layout(
+                            title="ECG Signal with Model Attention (Grad-CAM)",
+                            xaxis_title="Samples",
+                            yaxis_title="Amplitude / Importance",
+                            height=300
+                        )
+                        st.plotly_chart(fig_cam, use_container_width=True)
+
+                    except Exception as e:
+                        st.error(f"⚠️ Error during classification: {e}")
+
+            # TAB 3 — Typical Waveforms
+            with tab_compare:
+                st.subheader("Compare with Typical Class Waveforms")
+
+                typical_shapes = {}
+                for label in CLASS_LABELS.values():
+                    file_name = f"avg_{label.split()[0]}.npy"
+                    if os.path.exists(file_name):
+                        typical_shapes[label] = np.load(file_name)
+
+                if typical_shapes:
+                    selected_classes = st.multiselect(
+                        "Select classes to compare:",
+                        list(typical_shapes.keys()),
+                        default=[list(CLASS_LABELS.values())[pred_class]]
                     )
-                    bar_fig.update_yaxes(range=[0, 1])
-                    st.plotly_chart(bar_fig, use_container_width=True)
 
-                with col_right:
-                    st.markdown(f"### 🫀 Predicted Class: **Class {pred_class}**")
-                    if 'CLASS_LABELS' in globals() and pred_class < len(CLASS_LABELS):
-                        st.info(CLASS_LABELS[pred_class])
-                    else:
-                        st.info("Arrhythmia class description not available.")
+                    fig_cmp = go.Figure()
+                    fig_cmp.add_trace(go.Scatter(y=signal, mode="lines",
+                                                 name="Uploaded ECG", line=dict(color="black")))
 
-                # -------------------------------------------------
-                # Grad-CAM Visualization
-                # -------------------------------------------------
-                st.markdown("### 🔍 Model Attention (Grad-CAM 1D)")
-                cam = grad_cam_1d(model, x, pred_class)
+                    for c in selected_classes:
+                        fig_cmp.add_trace(go.Scatter(y=typical_shapes[c], mode="lines", name=f"Typical {c}"))
 
-                if len(cam) != len(signal):
-                    cam = np.interp(np.linspace(0, 1, len(signal)),
-                                    np.linspace(0, 1, len(cam)),
-                                    cam)
+                    fig_cmp.update_layout(
+                        title="Comparison with Typical ECG Patterns",
+                        xaxis_title="Samples",
+                        yaxis_title="Amplitude",
+                        height=300
+                    )
+                    st.plotly_chart(fig_cmp, use_container_width=True)
+                else:
+                    st.warning("⚠️ No typical waveform files found (e.g., avg_N.npy).")
 
-                fig_cam = go.Figure()
-                fig_cam.add_trace(go.Scatter(y=signal, mode="lines", name="ECG Signal", line=dict(color="black")))
-                fig_cam.add_trace(go.Scatter(y=cam * max(signal), mode="lines",
-                                             name="Grad-CAM Importance", line=dict(color="red")))
-                fig_cam.update_layout(
-                    title="ECG Signal with Model Attention (Grad-CAM)",
-                    xaxis_title="Samples",
-                    yaxis_title="Amplitude / Importance",
-                    height=300
-                )
-                st.plotly_chart(fig_cam, use_container_width=True)
+            # TAB 4 — Model Info
+            with tab_model:
+                st.subheader("Model & Performance Information")
+                st.markdown("""
+                ### 🧠 Technical Details
+                - **Architecture:** 1D Convolutional Neural Network (3 conv + 2 fully-connected layers)  
+                - **Dataset:** MIT-BIH Arrhythmia Database  
+                - **Reported accuracy:** ~83%  
+                - **AUC average:** ~0.95  
+                - **Frameworks:** PyTorch, Streamlit, Plotly  
+                """)
 
-            except Exception as e:
-                st.error(f"⚠️ Error during classification: {e}")
-
-    # -------------------------------------------------
-    # TAB 3 — Typical class waveforms
-    # -------------------------------------------------
-    with tab_compare:
-        st.subheader("Compare with Typical Class Waveforms")
-
-        typical_shapes = {}
-        for label in CLASS_LABELS.values():
-            file_name = f"avg_{label.split()[0]}.npy"
-            if os.path.exists(file_name):
-                typical_shapes[label] = np.load(file_name)
-
-        if typical_shapes:
-            selected_classes = st.multiselect(
-                "Select classes to compare:",
-                list(typical_shapes.keys()),
-                default=[list(CLASS_LABELS.values())[pred_class]]
-            )
-
-            fig_cmp = go.Figure()
-            fig_cmp.add_trace(go.Scatter(y=signal, mode="lines",
-                                         name="Uploaded ECG", line=dict(color="black")))
-
-            for c in selected_classes:
-                fig_cmp.add_trace(go.Scatter(y=typical_shapes[c], mode="lines", name=f"Typical {c}"))
-
-            fig_cmp.update_layout(
-                title="Comparison with Typical ECG Patterns",
-                xaxis_title="Samples",
-                yaxis_title="Amplitude",
-                height=300
-            )
-            st.plotly_chart(fig_cmp, use_container_width=True)
-        else:
-            st.warning("⚠️ No typical waveform files found (e.g., avg_N.npy).")
-
-    # -------------------------------------------------
-    # TAB 4 — Model & Performance Info
-    # -------------------------------------------------
-    with tab_model:
-        st.subheader("Model & Performance Information")
-        st.markdown("""
-        ### 🧠 Technical Details
-        - **Architecture:** 1D Convolutional Neural Network (3 conv + 2 fully-connected layers)  
-        - **Dataset:** MIT-BIH Arrhythmia Database  
-        - **Reported accuracy:** ~83%  
-        - **AUC average:** ~0.95  
-        - **Frameworks:** PyTorch, Streamlit, Plotly  
-        """)
+    except Exception as e:
+        st.error(f"⚠️ Error loading file: {e}")
