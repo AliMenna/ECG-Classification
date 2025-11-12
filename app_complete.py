@@ -267,6 +267,17 @@ if signal is not None:
                 # Show classification result
                 st.markdown(f"**Predicted class:** {CLASS_LABELS[pred_class]}")
                 st.info(CLASS_DESC[CLASS_LABELS[pred_class]])
+                # Show prediction results
+                        col_left, col_right = st.columns([1.5, 1])
+                        with col_left:
+                            bar_fig = px.bar(
+                                x=[CLASS_LABELS[i] for i in range(len(probs))],
+                                y=probs,
+                                title="Class probabilities",
+                                labels={"x": "Class", "y": "Probability"}
+                            )
+                            bar_fig.update_yaxes(range=[0, 1])
+                            st.plotly_chart(bar_fig, use_container_width=True)
 
                 # Plot Grad-CAM
                 st.markdown("### 🔎 Model Attention (Grad-CAM 1D)")
