@@ -191,7 +191,8 @@ if uploaded_file is not None:
             signal = numeric_df.iloc[row_idx].values.astype(np.float32)
             sig_len = len(signal)
 
-            EXPECTED_LENGTH = 180  # expected input length for the model
+            EXPECTED_LENGTH = model.input_shape[-1]
+
             signal = (signal - np.mean(signal)) / (np.std(signal) + 1e-8) #z-score normalization
 
 
