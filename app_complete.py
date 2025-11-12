@@ -152,17 +152,10 @@ st.markdown("Upload an ECG trace in **CSV** format to automatically classify arr
 # ------------------------------------------------------------
 # FILE UPLOAD AND DATA PREVIEW (CSV or Image)
 # ------------------------------------------------------------
-st.subheader("Upload your ECG data")
+st.title("ECG Arrhythmia Classifier")
+st.write("Upload an ECG **CSV** file.")
 
-
-
-signal = None  # initialize signal
-
-# ------------------------------------------------------------
-# 1️⃣ CSV MODE
-# ------------------------------------------------------------
-if input_type == "CSV file":
-    uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
+uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
 if uploaded_file is not None:
     try:
         # -------------------------------------------
