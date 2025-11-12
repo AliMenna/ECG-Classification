@@ -192,22 +192,22 @@ if uploaded_file is not None:
             sig_len = len(signal)
 
             EXPECTED_LENGTH = 180  # expected input length for the model
+            signal = (signal - np.mean(signal)) / (np.std(signal) + 1e-8) #z-score normalization
+
 
             if sig_len != EXPECTED_LENGTH:
                 if sig_len < EXPECTED_LENGTH:
                     # ECG shorter than expected → pad with zeros
-                    pad_size = EXPECTED_LENGTH - sig_len
-                    signal = np.pad(signal, (0, pad_size), mode='constant')
+                    pad_left = (EXPECTED_LENGTH - sig_len) // 2
+                    pad_right = EXPECTED_LENGTH - sig_len - pad_left
+                    signal = np.pad(signal, (pad_left, pad_right), mode='constant')
                     st.warning(f"⚠️ Signal too short ({sig_len} samples). Padded to {EXPECTED_LENGTH}.")
                 else:
                     # ECG longer than expected → resample smoothly
-                    signal = np.interp(
-                        np.linspace(0, 1, EXPECTED_LENGTH),
-                        np.linspace(0, 1, sig_len),
-                        signal
-                    )
-                    st.warning(f"⚠️ Signal too long ({sig_len} samples). Resampled to {EXPECTED_LENGTH}.")
-
+                    start = (sig_len - EXPECTED_LENGTH) // 2
+                    ignal = signal[start:start + EXPECTED_LENGTH]
+                    st.warning(f"⚠️ Signal too long ({sig_len} samples). Cropped to {EXPECTED_LENGTH}.")
+                    
             # -------------------------------------------
             # MAIN TABS
             # -------------------------------------------
