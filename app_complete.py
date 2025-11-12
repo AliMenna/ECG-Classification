@@ -8,7 +8,6 @@ import plotly.graph_objects as go
 import plotly.express as px
 import os
 from PIL import Image
-import cv2
 
 
 
@@ -219,11 +218,13 @@ elif input_type == "ECG image":
         st.image(image, caption="Uploaded ECG Image", use_column_width=True)
 
         # Convert to grayscale and process
-        img = np.array(image.convert("L"))
-        img = cv2.resize(img, (500, 200))
-        img = cv2.bitwise_not(img)
-        _, thresh = cv2.threshold(img, 100, 255, cv2.THRESH_BINARY)
-
+        
+        image = image.convert("L")  # Convert to grayscale
+        image = image.resize((500, 200))  # Resize image
+        img = np.array(image)
+        img = 255 - img #greyscale
+        thresh = np.where(img > 100, 255, 0)
+        
         # Extract 1D signal from image
         signal = np.mean(thresh, axis=0)
         signal = (signal - np.min(signal)) / (np.max(signal) - np.min(signal))
