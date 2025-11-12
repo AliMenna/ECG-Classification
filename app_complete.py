@@ -7,7 +7,7 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 import os
-from PIL import Image
+
 
 
 
@@ -154,8 +154,7 @@ st.markdown("Upload an ECG trace in **CSV** format to automatically classify arr
 # ------------------------------------------------------------
 st.subheader("Upload your ECG data")
 
-# Let the user choose between CSV or image input
-input_type = st.radio("Select input type:", ["CSV file", "ECG image"])
+
 
 signal = None  # initialize signal
 
@@ -164,110 +163,91 @@ signal = None  # initialize signal
 # ------------------------------------------------------------
 if input_type == "CSV file":
     uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
+if uploaded_file is not None:
+    try:
+        # -------------------------------------------
+        # Load the CSV file
+        # -------------------------------------------
+        df = pd.read_csv(uploaded_file)
 
-    if uploaded_file is not None:
-        try:
-            # Load and clean the CSV
-            df = pd.read_csv(uploaded_file)
-            df = df.drop(columns=['label', 'target', 'class'], errors='ignore')
-            numeric_df = df.select_dtypes(include=[np.number])
+        # Drop label/target/class columns if present
+        df = df.drop(columns=['label', 'target', 'class'], errors='ignore')
 
-            if numeric_df.empty:
-                st.error("❌ No numeric data found in this CSV file. Please upload a valid ECG signal file.")
-            else:
-                st.success(f"✅ File successfully uploaded. Shape: {numeric_df.shape}")
+        # Keep only numeric columns
+        numeric_df = df.select_dtypes(include=[np.number])
 
-                # Select the row (heartbeat) to analyze
-                row_idx = st.slider(
-                    "Select the row (heartbeat) to analyze:",
-                    0,
-                    len(numeric_df) - 1,
-                    0
+        # Check if valid data was loaded
+        if numeric_df.empty:
+            st.error("❌ No numeric data found in this CSV file. Please upload a valid ECG signal file.")
+        else:
+            st.success(f"✅ File successfully uploaded. Shape: {numeric_df.shape}")
+
+            # -------------------------------------------
+            # Select which row (beat) to analyze
+            # -------------------------------------------
+            row_idx = st.slider(
+                "Select the row (heartbeat) to analyze:",
+                0,
+                len(numeric_df) - 1,
+                0
+            )
+
+            # -------------------------------------------
+            # Prepare ECG signal and adjust its length
+            # -------------------------------------------
+            signal = numeric_df.iloc[row_idx].values.astype(np.float32)
+            sig_len = len(signal)
+
+            EXPECTED_LENGTH = 180  # expected input length for the model
+
+            if sig_len != EXPECTED_LENGTH:
+                if sig_len < EXPECTED_LENGTH:
+                    # ECG shorter than expected → pad with zeros
+                    pad_size = EXPECTED_LENGTH - sig_len
+                    signal = np.pad(signal, (0, pad_size), mode='constant')
+                    st.warning(f"⚠️ Signal too short ({sig_len} samples). Padded to {EXPECTED_LENGTH}.")
+                else:
+                    # ECG longer than expected → resample smoothly
+                    signal = np.interp(
+                        np.linspace(0, 1, EXPECTED_LENGTH),
+                        np.linspace(0, 1, sig_len),
+                        signal
+                    )
+                    st.warning(f"⚠️ Signal too long ({sig_len} samples). Resampled to {EXPECTED_LENGTH}.")
+
+            # -------------------------------------------
+            # MAIN TABS
+            # -------------------------------------------
+            tab_signal, tab_result, tab_model = st.tabs(
+                ["📈 Signal", "🔍 Classification", "ℹ️ Model Info"]
+            )
+
+            # TAB 1 - Display ECG signal
+            with tab_signal:
+                st.subheader("Selected ECG Signal")
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(y=signal, mode="lines", name="ECG", line=dict(color="black")))
+                fig.update_layout(
+                    xaxis_title="Samples",
+                    yaxis_title="Amplitude",
+                    height=300
                 )
+                st.plotly_chart(fig, use_container_width=True)
 
-                # Extract the signal
-                signal = numeric_df.iloc[row_idx].values.astype(np.float32)
-                sig_len = len(signal)
-                EXPECTED_LENGTH = 180
+            # TAB 2 - Classification and Grad-CAM
+            with tab_result:
+                st.subheader("Classification and Model Explanation")
 
-                # Adjust signal length
-                if sig_len != EXPECTED_LENGTH:
-                    if sig_len < EXPECTED_LENGTH:
-                        pad_size = EXPECTED_LENGTH - sig_len
-                        signal = np.pad(signal, (0, pad_size), mode='constant')
-                        st.warning(f"⚠️ Signal too short ({sig_len} samples). Padded to {EXPECTED_LENGTH}.")
-                    else:
-                        signal = np.interp(
-                            np.linspace(0, 1, EXPECTED_LENGTH),
-                            np.linspace(0, 1, sig_len),
-                            signal
-                        )
-                        st.warning(f"⚠️ Signal too long ({sig_len} samples). Resampled to {EXPECTED_LENGTH}.")
+                if st.button("🔍 Analyze ECG"):
+                    try:
+                        # Prepare tensor and predict
+                        x = torch.tensor(signal, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+                        with torch.no_grad():
+                            output = model(x)
+                            probs = torch.softmax(output, dim=1).cpu().numpy()[0]
+                            pred_class = int(np.argmax(probs))
 
-        except Exception as e:
-            st.error(f"⚠️ Error loading file: {e}")
-
-# ------------------------------------------------------------
-# 2️⃣ IMAGE MODE
-# ------------------------------------------------------------
-elif input_type == "ECG image":
-    uploaded_image = st.file_uploader("Upload an ECG image (.png, .jpg, .jpeg)", type=["png", "jpg", "jpeg"])
-
-    if uploaded_image is not None:
-        image = Image.open(uploaded_image)
-        st.image(image, caption="Uploaded ECG Image", use_column_width=True)
-
-        # Convert to grayscale and process
-        
-        image = image.convert("L")  # Convert to grayscale
-        image = image.resize((500, 200))  # Resize image
-        img = np.array(image)
-        img = 255 - img #greyscale
-        thresh = np.where(img > 100, 255, 0)
-        
-        # Extract 1D signal from image
-        signal = np.mean(thresh, axis=0)
-        signal = (signal - np.min(signal)) / (np.max(signal) - np.min(signal))
-
-        EXPECTED_LENGTH = 180
-        signal = np.interp(np.linspace(0, 1, EXPECTED_LENGTH),
-                           np.linspace(0, 1, len(signal)),
-                           signal).astype(np.float32)
-
-        st.success("✅ ECG signal extracted from image.")
-
-# ------------------------------------------------------------
-# 3️⃣ MAIN TABS (only if signal is ready)
-# ------------------------------------------------------------
-if signal is not None:
-    tab_signal, tab_result, tab_model = st.tabs(
-        ["📈 Signal", "🧠 Classification", "ℹ️ Model Info"]
-    )
-
-    # TAB 1 - Display ECG signal
-    with tab_signal:
-        st.subheader("Selected ECG Signal")
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(y=signal, mode="lines", name="ECG", line=dict(color="black")))
-        fig.update_layout(xaxis_title="Samples", yaxis_title="Amplitude", height=300)
-        st.plotly_chart(fig, use_container_width=True)
-
-    # TAB 2 - Classification and Grad-CAM
-    with tab_result:
-        st.subheader("Classification and Model Explanation")
-        if st.button("🔍 Analyze ECG"):
-            try:
-                # Prepare tensor
-                x = torch.tensor(signal, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
-                with torch.no_grad():
-                    output = model(x)
-                    probs = torch.softmax(output, dim=1).cpu().numpy()[0]
-                    pred_class = int(np.argmax(probs))
-
-                # Show classification result
-                st.markdown(f"**Predicted class:** {CLASS_LABELS[pred_class]}")
-                st.info(CLASS_DESC[CLASS_LABELS[pred_class]])
-                # Show prediction results
+                        # Show prediction results
                         col_left, col_right = st.columns([1.5, 1])
                         with col_left:
                             bar_fig = px.bar(
@@ -279,34 +259,43 @@ if signal is not None:
                             bar_fig.update_yaxes(range=[0, 1])
                             st.plotly_chart(bar_fig, use_container_width=True)
 
-                # Plot Grad-CAM
-                st.markdown("### 🔎 Model Attention (Grad-CAM 1D)")
-                cam = grad_cam_1d(model, x, pred_class)
-                fig_cam = go.Figure()
-                fig_cam.add_trace(go.Scatter(y=signal, mode="lines", name="ECG Signal", line=dict(color="black")))
-                fig_cam.add_trace(go.Scatter(
-                    y=cam * (signal.max() - signal.min()) + signal.min(),
-                    mode="lines", name="Grad-CAM Importance", line=dict(color="red")
-                ))
-                fig_cam.update_layout(
-                    title="ECG Signal with Model Attention (Grad-CAM)",
-                    xaxis_title="Samples",
-                    yaxis_title="Amplitude / Importance",
-                    height=350
-                )
-                st.plotly_chart(fig_cam, use_container_width=True)
+                        with col_right:
+                            st.markdown(f"**Predicted class:** `{CLASS_LABELS[pred_class]}`")
+                            st.info(CLASS_DESC[CLASS_LABELS[pred_class]])
 
-            except Exception as e:
-                st.error(f"⚠️ Error during classification: {e}")
+                        # GRAD-CAM visualization
+                        st.markdown("### 🧠 Model Attention (Grad-CAM 1D)")
+                        cam = grad_cam_1d(model, x, pred_class)
 
-    # TAB 3 - Model info
-    with tab_model:
-        st.markdown("""
-        ### ℹ️ Model Information
-        **Architecture:** 1D CNN (3 conv layers + 2 FC)  
-        **Dataset:** MIT-BIH Arrhythmia  
-        **Accuracy:** ~83%  
-        **AUC average:** 0.95  
-        **Frameworks:** PyTorch, Streamlit, Plotly
-        """)
+                        fig_cam = go.Figure()
+                        fig_cam.add_trace(go.Scatter(y=signal, mode="lines", name="ECG Signal", line=dict(color="black")))
+                        fig_cam.add_trace(go.Scatter(
+                            y=(signal.max() - signal.min()) * cam + signal.min(),
+                            mode="lines",
+                            name="Grad-CAM Importance",
+                            line=dict(color="red")
+                        ))
+                        fig_cam.update_layout(
+                            title="ECG Signal with Model Attention (Grad-CAM)",
+                            xaxis_title="Samples",
+                            yaxis_title="Amplitude / Importance",
+                            height=300
+                        )
+                        st.plotly_chart(fig_cam, use_container_width=True)
+
+                    except Exception as e:
+                        st.error(f"⚠️ Error during classification: {e}")
+
+            # TAB 3 - Model Info
+            with tab_model:
+                st.markdown("""
+                ### 🧩 Technical Information
+                **Architecture:** 1D Convolutional Neural Network (3 conv + 2 FC layers)  
+                **Training dataset:** MIT-BIH Arrhythmia  
+                **Reported accuracy:** ~83%  
+                **AUC average:** ~0.95  
+                **Libraries:** PyTorch, Streamlit, Plotly
+                """)
+    except Exception as e:
+        st.error(f"⚠️ Error loading file: {e}")
 
