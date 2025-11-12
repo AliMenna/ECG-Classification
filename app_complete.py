@@ -182,31 +182,44 @@ if uploaded_file is not None:
             # -------------------------------------------
             # MAIN TABS (INSIDE THE ELSE)
             # -------------------------------------------
-            tab_signal, tab_result, tab_compare, tab_model = st.tabs(
+            tab_signal, tab_result, tab_model = st.tabs(
                 ["📈 Signal", "🧠 Classification", "ℹ️ Model Info"]
             )
 
+            # -------------------------------------------------
             # TAB 1 — Display ECG signal
+            # -------------------------------------------------
             with tab_signal:
                 st.subheader("Selected ECG Signal")
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(y=signal, mode="lines", name="ECG"))
-                fig.update_layout(xaxis_title="Samples", yaxis_title="Amplitude", height=300)
+                fig.update_layout(
+                    xaxis_title="Samples",
+                    yaxis_title="Amplitude",
+                    height=300
+                )
                 st.plotly_chart(fig, use_container_width=True)
 
+            # -------------------------------------------------
             # TAB 2 — Classification and Grad-CAM
+            # -------------------------------------------------
             with tab_result:
                 st.subheader("Classification and Model Explanation")
 
                 if st.button("🔍 Analyze ECG"):
                     try:
+                        # Prepare input tensor
                         x = torch.tensor(signal, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+
+                        # Forward pass
                         with torch.no_grad():
                             output = model(x)
                             probs = torch.softmax(output, dim=1).cpu().numpy()[0]
                             pred_class = int(np.argmax(probs))
 
+                        # Show prediction results
                         col_left, col_right = st.columns([1.3, 1])
+
                         with col_left:
                             bar_fig = px.bar(
                                 x=[f"Class {i}" for i in range(len(probs))],
@@ -224,7 +237,9 @@ if uploaded_file is not None:
                             else:
                                 st.info("Arrhythmia class description not available.")
 
-                        # Grad-CAM
+                        # -------------------------------------------------
+                        # Grad-CAM Visualization
+                        # -------------------------------------------------
                         st.markdown("### 🔍 Model Attention (Grad-CAM 1D)")
                         cam = grad_cam_1d(model, x, pred_class)
 
@@ -248,8 +263,9 @@ if uploaded_file is not None:
                     except Exception as e:
                         st.error(f"⚠️ Error during classification: {e}")
 
-
-            # TAB 4 — Model Info
+            # -------------------------------------------------
+            # TAB 3 — Model & Performance Info
+            # -------------------------------------------------
             with tab_model:
                 st.subheader("Model & Performance Information")
                 st.markdown("""
