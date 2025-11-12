@@ -151,16 +151,18 @@ uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
 
 if uploaded_file is not None:
     try:
-        # Load the CSV
+        # -------------------------------------------
+        # Load the CSV file
+        # -------------------------------------------
         df = pd.read_csv(uploaded_file)
 
-        # Drop possible label columns if they exist
+        # Drop label/target/class columns if present
         df = df.drop(columns=['label', 'target', 'class'], errors='ignore')
 
         # Keep only numeric columns
         numeric_df = df.select_dtypes(include=[np.number])
 
-        # Check that the file contains enough data
+        # Check if valid data was loaded
         if numeric_df.empty:
             st.error("❌ No numeric data found in this CSV file. Please upload a valid ECG signal file.")
         else:
@@ -176,23 +178,41 @@ if uploaded_file is not None:
                 0
             )
 
+            # -------------------------------------------
+            # Prepare ECG signal and adjust its length
+            # -------------------------------------------
             signal = numeric_df.iloc[row_idx].values.astype(np.float32)
             sig_len = len(signal)
 
+            EXPECTED_LENGTH = 180  # expected input length for the model
+
+            if sig_len != EXPECTED_LENGTH:
+                if sig_len < EXPECTED_LENGTH:
+                    # ECG shorter than expected → pad with zeros
+                    pad_size = EXPECTED_LENGTH - sig_len
+                    signal = np.pad(signal, (0, pad_size), mode='constant')
+                    st.warning(f"⚠️ Signal too short ({sig_len} samples). Padded to {EXPECTED_LENGTH}.")
+                else:
+                    # ECG longer than expected → resample smoothly
+                    signal = np.interp(
+                        np.linspace(0, 1, EXPECTED_LENGTH),
+                        np.linspace(0, 1, sig_len),
+                        signal
+                    )
+                    st.warning(f"⚠️ Signal too long ({sig_len} samples). Resampled to {EXPECTED_LENGTH}.")
+
             # -------------------------------------------
-            # MAIN TABS (INSIDE THE ELSE)
+            # MAIN TABS
             # -------------------------------------------
             tab_signal, tab_result, tab_model = st.tabs(
-                ["📈 Signal", "🧠 Classification", "ℹ️ Model Info"]
+                ["📈 Signal", "🔍 Classification", "ℹ️ Model Info"]
             )
 
-            # -------------------------------------------------
-            # TAB 1 — Display ECG signal
-            # -------------------------------------------------
+            # TAB 1 - Display ECG signal
             with tab_signal:
                 st.subheader("Selected ECG Signal")
                 fig = go.Figure()
-                fig.add_trace(go.Scatter(y=signal, mode="lines", name="ECG"))
+                fig.add_trace(go.Scatter(y=signal, mode="lines", name="ECG", line=dict(color="black")))
                 fig.update_layout(
                     xaxis_title="Samples",
                     yaxis_title="Amplitude",
@@ -200,58 +220,47 @@ if uploaded_file is not None:
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-            # -------------------------------------------------
-            # TAB 2 — Classification and Grad-CAM
-            # -------------------------------------------------
+            # TAB 2 - Classification and Grad-CAM
             with tab_result:
                 st.subheader("Classification and Model Explanation")
 
                 if st.button("🔍 Analyze ECG"):
                     try:
-                        # Prepare input tensor
+                        # Prepare tensor and predict
                         x = torch.tensor(signal, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
-
-                        # Forward pass
                         with torch.no_grad():
                             output = model(x)
                             probs = torch.softmax(output, dim=1).cpu().numpy()[0]
                             pred_class = int(np.argmax(probs))
 
                         # Show prediction results
-                        col_left, col_right = st.columns([1.3, 1])
-
+                        col_left, col_right = st.columns([1.5, 1])
                         with col_left:
                             bar_fig = px.bar(
-                                x=[f"Class {i}" for i in range(len(probs))],
+                                x=[CLASS_LABELS[i] for i in range(len(probs))],
                                 y=probs,
-                                title="Prediction Probabilities",
+                                title="Class probabilities",
                                 labels={"x": "Class", "y": "Probability"}
                             )
                             bar_fig.update_yaxes(range=[0, 1])
                             st.plotly_chart(bar_fig, use_container_width=True)
 
                         with col_right:
-                            st.markdown(f"### 🫀 Predicted Class: **Class {pred_class}**")
-                            if 'CLASS_LABELS' in globals() and pred_class < len(CLASS_LABELS):
-                                st.info(CLASS_LABELS[pred_class])
-                            else:
-                                st.info("Arrhythmia class description not available.")
+                            st.markdown(f"**Predicted class:** `{CLASS_LABELS[pred_class]}`")
+                            st.info(CLASS_DESC[CLASS_LABELS[pred_class]])
 
-                        # -------------------------------------------------
-                        # Grad-CAM Visualization
-                        # -------------------------------------------------
-                        st.markdown("### 🔍 Model Attention (Grad-CAM 1D)")
+                        # GRAD-CAM visualization
+                        st.markdown("### 🧠 Model Attention (Grad-CAM 1D)")
                         cam = grad_cam_1d(model, x, pred_class)
-
-                        if len(cam) != len(signal):
-                            cam = np.interp(np.linspace(0, 1, len(signal)),
-                                            np.linspace(0, 1, len(cam)),
-                                            cam)
 
                         fig_cam = go.Figure()
                         fig_cam.add_trace(go.Scatter(y=signal, mode="lines", name="ECG Signal", line=dict(color="black")))
-                        fig_cam.add_trace(go.Scatter(y=cam * max(signal), mode="lines",
-                                                     name="Grad-CAM Importance", line=dict(color="red")))
+                        fig_cam.add_trace(go.Scatter(
+                            y=(signal.max() - signal.min()) * cam + signal.min(),
+                            mode="lines",
+                            name="Grad-CAM Importance",
+                            line=dict(color="red")
+                        ))
                         fig_cam.update_layout(
                             title="ECG Signal with Model Attention (Grad-CAM)",
                             xaxis_title="Samples",
@@ -263,19 +272,15 @@ if uploaded_file is not None:
                     except Exception as e:
                         st.error(f"⚠️ Error during classification: {e}")
 
-            # -------------------------------------------------
-            # TAB 3 — Model & Performance Info
-            # -------------------------------------------------
+            # TAB 3 - Model Info
             with tab_model:
-                st.subheader("Model & Performance Information")
                 st.markdown("""
-                ### 🧠 Technical Details
-                - **Architecture:** 1D Convolutional Neural Network (3 conv + 2 fully-connected layers)  
-                - **Dataset:** MIT-BIH Arrhythmia Database  
-                - **Reported accuracy:** ~83%  
-                - **AUC average:** ~0.95  
-                - **Frameworks:** PyTorch, Streamlit, Plotly  
+                ### 🧩 Technical Information
+                **Architecture:** 1D Convolutional Neural Network (3 conv + 2 FC layers)  
+                **Training dataset:** MIT-BIH Arrhythmia  
+                **Reported accuracy:** ~83%  
+                **AUC average:** ~0.95  
+                **Libraries:** PyTorch, Streamlit, Plotly
                 """)
-
     except Exception as e:
         st.error(f"⚠️ Error loading file: {e}")
