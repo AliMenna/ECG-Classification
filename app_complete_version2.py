@@ -87,47 +87,40 @@ CLASS_DESC = {
 # -------------------------------------------------
 # 3. GRAD-CAM 1D IMPLEMENTATION
 # -------------------------------------------------
-def grad_cam_1d(model, x, target_class):
+def layercam_1d(model, x, target_class):
     model.eval()
 
     activations = {}
     gradients = {}
 
-    # Hook SULL'OUTPUT DI bn3 + relu, non su conv3!
+    # Usiamo conv3 MA dopo la ReLU, come LayerCAM richiede
     def forward_hook(module, inp, out):
         activations["value"] = out
 
     def backward_hook(module, grad_in, grad_out):
         gradients["value"] = grad_out[0]
 
-    # Qui mettiamo gli hook sul blocco completo conv3→bn3→relu
     handle_f = model.bn3.register_forward_hook(forward_hook)
     handle_b = model.bn3.register_backward_hook(backward_hook)
 
-    # Forward
     x = x.clone().detach().requires_grad_(True)
     output = model(x)
     loss = output[0, target_class]
 
-    # Backward
     model.zero_grad()
     loss.backward(retain_graph=True)
 
-    # Attivazioni e gradienti
-    acts = activations["value"].detach()      # (1, C, L)
-    grads = gradients["value"].detach()       # (1, C, L)
+    acts = activations["value"]          # (1, C, L)
+    grads = gradients["value"]           # (1, C, L)
 
-    # GAP
-    weights = grads.mean(dim=2, keepdim=True)  # (1, C, 1)
+    # LayerCAM: attivazioni * ReLU(grad)
+    cam = (acts * grads.relu()).sum(dim=1)  # (1, L)
+    cam = cam.squeeze().detach().cpu().numpy()
 
-    # Weighted sum
-    cam = (weights * acts).sum(dim=1).relu()    # (1, L)
-    cam = cam.squeeze().cpu().numpy()
-
-    # Normalize
+    # Normalizzazione
     cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
 
-    # Upsample to 180
+    # Upsample a 180 punti
     cam = np.interp(np.linspace(0, 1, 180),
                     np.linspace(0, 1, len(cam)),
                     cam)
