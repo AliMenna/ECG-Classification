@@ -6,9 +6,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-import os
-
-
+from scipy.signal import find_peaks
 
 
 # -------------------------------------------------
@@ -18,28 +16,23 @@ class ECGCNN(nn.Module):
     def __init__(self, num_classes=5):
         super(ECGCNN, self).__init__()
 
-        # First convolutional block
-        self.conv1 = nn.Conv1d(in_channels=1, out_channels=32, kernel_size=7, padding=3)
+        self.conv1 = nn.Conv1d(1, 32, kernel_size=7, padding=3)
         self.bn1 = nn.BatchNorm1d(32)
         self.pool1 = nn.MaxPool1d(2)
 
-        # Second convolutional block
         self.conv2 = nn.Conv1d(32, 64, kernel_size=5, padding=2)
         self.bn2 = nn.BatchNorm1d(64)
         self.pool2 = nn.MaxPool1d(2)
 
-        # Third convolutional block
         self.conv3 = nn.Conv1d(64, 128, kernel_size=3, padding=1)
         self.bn3 = nn.BatchNorm1d(128)
         self.pool3 = nn.MaxPool1d(2)
 
-        # Fully connected layers
-        self.fc1 = nn.Linear(128 * 22, 128)  # 180 -> 90 -> 45 -> 22 after pooling
+        self.fc1 = nn.Linear(128 * 22, 128)
         self.dropout = nn.Dropout(0.5)
         self.fc2 = nn.Linear(128, num_classes)
 
     def forward(self, x):
-        # Forward propagation
         x = F.relu(self.bn1(self.conv1(x)))
         x = self.pool1(x)
 
@@ -49,10 +42,11 @@ class ECGCNN(nn.Module):
         x = F.relu(self.bn3(self.conv3(x)))
         x = self.pool3(x)
 
-        x = x.view(x.size(0), -1)  # Flatten
+        x = x.view(x.size(0), -1)
         x = self.dropout(F.relu(self.fc1(x)))
         x = self.fc2(x)
         return x
+
 
 # -------------------------------------------------
 # 2. LOAD TRAINED MODEL
@@ -66,7 +60,10 @@ def load_model():
 
 model = load_model()
 
-# Class labels and medical descriptions
+
+# -------------------------------------------------
+# 3. CLASS LABELS
+# -------------------------------------------------
 CLASS_LABELS = {
     0: "Fusion (F)",
     1: "Normal (N)",
@@ -77,144 +74,160 @@ CLASS_LABELS = {
 
 CLASS_DESC = {
     "Normal (N)": "Regular cardiac activity without significant arrhythmia.",
-    "Supraventricular (S)": "Premature atrial or junctional beats of supraventricular origin.",
-    "Ventricular (V)": "Ventricular premature contractions or ventricular tachycardia.",
+    "Supraventricular (S)": "Premature atrial or junctional beats.",
+    "Ventricular (V)": "Ventricular premature contractions or tachycardia.",
     "Fusion (F)": "Fusion between a normal and a premature beat.",
-    "Unknown (Q)": "Unclear signal, not confidently assignable to other classes."
+    "Unknown (Q)": "Unclear signal, hard to classify reliably."
 }
 
 
+# -------------------------------------------------
+# 4. R-PEAK DETECTION + CLINICAL FEATURES
+# -------------------------------------------------
+def detect_r_peaks(signal, fs=180):
+    smoothed = pd.Series(signal).rolling(window=5, center=True, min_periods=1).mean().values
+    peaks, _ = find_peaks(smoothed, height=np.mean(smoothed) + np.std(smoothed) / 2,
+                          distance=int(0.2 * fs))
+    return peaks
+
+
+def ecg_features(signal, peaks, fs=180):
+    features = {}
+
+    if len(peaks) == 0:
+        features["R_peaks"] = "No peaks detected"
+        return features
+
+    features["R amplitude"] = float(signal[peaks].max())
+
+    qrs_durations = []
+    for p in peaks:
+        left = p
+        while left > 0 and signal[left] > signal[p] * 0.5:
+            left -= 1
+        right = p
+        while right < len(signal) - 1 and signal[right] > signal[p] * 0.5:
+            right += 1
+        qrs_durations.append((right - left) / fs * 1000)
+
+    features["QRS duration (ms)"] = float(np.mean(qrs_durations))
+
+    if len(peaks) >= 2:
+        rr = np.diff(peaks) / fs * 1000
+        features["RR interval (ms)"] = float(np.mean(rr))
+        features["Heart Rate (bpm)"] = float(60000 / np.mean(rr))
+    else:
+        features["RR interval (ms)"] = "N/A"
+        features["Heart Rate (bpm)"] = "N/A"
+
+    return features
 
 
 # -------------------------------------------------
-# 4. STREAMLIT DASHBOARD
+# 5. STREAMLIT DASHBOARD
 # -------------------------------------------------
 st.set_page_config(page_title="ECG Arrhythmia Classifier", layout="wide")
 st.title("💓 ECG Arrhythmia Classifier")
-st.markdown("Upload an ECG trace in **CSV** format to automatically classify arrhythmia and visualize model interpretation.")
+st.write("Upload an ECG **CSV** file to classify arrhythmia and analyze the heartbeat.")
 
-# -------------------------------------------------
-# 📤 FILE UPLOAD AND DATA PREVIEW
-# -------------------------------------------------
-# ------------------------------------------------------------
-# FILE UPLOAD AND DATA PREVIEW (CSV or Image)
-# ------------------------------------------------------------
-st.title("ECG Arrhythmia Classifier")
-st.write("Upload an ECG **CSV** file.")
 
 uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
+
 if uploaded_file is not None:
     try:
-        # -------------------------------------------
-        # Load the CSV file
-        # -------------------------------------------
         df = pd.read_csv(uploaded_file)
-
-        # Drop label/target/class columns if present
         df = df.drop(columns=['label', 'target', 'class'], errors='ignore')
-
-        # Keep only numeric columns
         numeric_df = df.select_dtypes(include=[np.number])
 
-        # Check if valid data was loaded
         if numeric_df.empty:
-            st.error("❌ No numeric data found in this CSV file. Please upload a valid ECG signal file.")
+            st.error("❌ No valid numeric data found in this CSV.")
         else:
-            st.success(f"✅ File successfully uploaded. Shape: {numeric_df.shape}")
+            st.success(f"✅ File loaded. Shape: {numeric_df.shape}")
 
-            # -------------------------------------------
-            # Select which row (beat) to analyze
-            # -------------------------------------------
-            row_idx = st.slider(
-                "Select the row (heartbeat) to analyze:",
-                0,
-                len(numeric_df) - 1,
-                0
-            )
+            row_idx = st.slider("Select heartbeat row:", 0, len(numeric_df) - 1, 0)
 
-            # -------------------------------------------
-            # Prepare ECG signal and adjust its length
-            # -------------------------------------------
             signal = numeric_df.iloc[row_idx].values.astype(np.float32)
             sig_len = len(signal)
-
-            EXPECTED_LENGTH = 180  # expected input length for the model
+            EXPECTED_LENGTH = 180
 
             if sig_len != EXPECTED_LENGTH:
                 if sig_len < EXPECTED_LENGTH:
-                    # ECG shorter than expected → pad with zeros
-                    pad_size = EXPECTED_LENGTH - sig_len
-                    signal = np.pad(signal, (0, pad_size), mode='constant')
-                    st.warning(f"⚠️ Signal too short ({sig_len} samples). Padded to {EXPECTED_LENGTH}.")
+                    pad = EXPECTED_LENGTH - sig_len
+                    signal = np.pad(signal, (0, pad))
+                    st.warning(f"⚠️ Signal too short ({sig_len}). Padded to {EXPECTED_LENGTH}.")
                 else:
-                    # ECG longer than expected → resample smoothly
-                    signal = np.interp(
-                        np.linspace(0, 1, EXPECTED_LENGTH),
-                        np.linspace(0, 1, sig_len),
-                        signal
-                    )
-                    st.warning(f"⚠️ Signal too long ({sig_len} samples). Resampled to {EXPECTED_LENGTH}.")
+                    signal = np.interp(np.linspace(0, 1, EXPECTED_LENGTH),
+                                       np.linspace(0, 1, sig_len),
+                                       signal)
+                    st.warning(f"⚠️ Signal too long ({sig_len}). Resampled to {EXPECTED_LENGTH}.")
 
-            # -------------------------------------------
-            # MAIN TABS
-            # -------------------------------------------
             tab_signal, tab_result, tab_model = st.tabs(
-                ["📈 Signal", "🔍 Classification", "ℹ️ Model Info"]
+                ["📈 Signal", "🧪 Classification", "ℹ️ Model Info"]
             )
 
-            # TAB 1 - Display ECG signal
+            # TAB 1 — ECG + R-peaks
             with tab_signal:
-                st.subheader("Selected ECG Signal")
+                st.subheader("ECG Signal")
                 fig = go.Figure()
-                fig.add_trace(go.Scatter(y=signal, mode="lines", name="ECG", line=dict(color="black")))
-                fig.update_layout(
-                    xaxis_title="Samples",
-                    yaxis_title="Amplitude",
-                    height=300
-                )
+                fig.add_trace(go.Scatter(y=signal, mode="lines",
+                                         line=dict(color="black"), name="ECG"))
+                fig.update_layout(height=300, xaxis_title="Samples", yaxis_title="Amplitude")
                 st.plotly_chart(fig, use_container_width=True)
 
-            # TAB 2 - Classification and Grad-CAM
+                st.subheader("🔎 R-Peak Detection")
+                peaks = detect_r_peaks(signal)
+
+                fig_r = go.Figure()
+                fig_r.add_trace(go.Scatter(y=signal, mode="lines",
+                                           line=dict(color="black"), name="ECG"))
+
+                if len(peaks) > 0:
+                    fig_r.add_trace(go.Scatter(
+                        x=peaks, y=signal[peaks], mode="markers",
+                        marker=dict(color="red", size=8),
+                        name="R Peaks"
+                    ))
+
+                fig_r.update_layout(title="ECG with R-Peak Detection",
+                                    height=300, xaxis_title="Samples")
+                st.plotly_chart(fig_r, use_container_width=True)
+
+                st.subheader("🩺 ECG Feature Analysis")
+                features = ecg_features(signal, peaks)
+                st.json(features)
+
+            # TAB 2 — Classification
             with tab_result:
-                st.subheader("Classification and Model Explanation")
+                st.subheader("Classification Result")
 
-                if st.button("🔍 Analyze ECG"):
-                    try:
-                        # Prepare tensor and predict
-                        x = torch.tensor(signal, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
-                        with torch.no_grad():
-                            output = model(x)
-                            probs = torch.softmax(output, dim=1).cpu().numpy()[0]
-                            pred_class = int(np.argmax(probs))
+                x = torch.tensor(signal, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+                with torch.no_grad():
+                    output = model(x)
+                    probs = torch.softmax(output, dim=1).cpu().numpy()[0]
+                    pred_class = int(np.argmax(probs))
 
-                        # Show prediction results
-                        col_left, col_right = st.columns([1.5, 1])
-                        with col_left:
-                            bar_fig = px.bar(
-                                x=[CLASS_LABELS[i] for i in range(len(probs))],
-                                y=probs,
-                                title="Class probabilities",
-                                labels={"x": "Class", "y": "Probability"}
-                            )
-                            bar_fig.update_yaxes(range=[0, 1])
-                            st.plotly_chart(bar_fig, use_container_width=True)
+                st.markdown(f"### Predicted class: **{CLASS_LABELS[pred_class]}**")
+                st.info(CLASS_DESC[CLASS_LABELS[pred_class]])
 
-                        with col_right:
-                            st.markdown(f"**Predicted class:** `{CLASS_LABELS[pred_class]}`")
-                            st.info(CLASS_DESC[CLASS_LABELS[pred_class]])
+                fig_bar = px.bar(
+                    x=[CLASS_LABELS[i] for i in range(5)],
+                    y=probs,
+                    labels={"x": "Class", "y": "Probability"},
+                    title="Prediction Probabilities"
+                )
+                fig_bar.update_yaxes(range=[0, 1])
+                st.plotly_chart(fig_bar, use_container_width=True)
 
-                    except Exception as e:
-                        st.error(f"⚠️ Error during classification: {e}")
-
-            # TAB 3 - Model Info
+            # TAB 3 — Model Info
             with tab_model:
                 st.markdown("""
-                ### 🧩 Technical Information
-                **Architecture:** 1D Convolutional Neural Network (3 conv + 2 FC layers)  
-                **Training dataset:** MIT-BIH Arrhythmia  
-                **Reported accuracy:** ~83%  
-                **AUC average:** ~0.95  
-                **Libraries:** PyTorch, Streamlit, Plotly
+                ### 🧩 Model Information
+                **Architecture:** 1D CNN (3 conv + 2 FC layers)  
+                **Dataset:** MIT-BIH Arrhythmia  
+                **Reported Accuracy:** ~83%  
+                **AUC:** ~0.95  
+                **Libraries:** PyTorch, Streamlit, Plotly  
                 """)
+
     except Exception as e:
         st.error(f"⚠️ Error loading file: {e}")
