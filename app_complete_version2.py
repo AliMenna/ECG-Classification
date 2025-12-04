@@ -6,7 +6,6 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-from scipy.signal import find_peaks
 
 
 # -------------------------------------------------
@@ -85,42 +84,28 @@ CLASS_DESC = {
 # 4. R-PEAK DETECTION + CLINICAL FEATURES
 # -------------------------------------------------
 def detect_r_peaks(signal, fs=180):
-    smoothed = pd.Series(signal).rolling(window=5, center=True, min_periods=1).mean().values
-    peaks, _ = find_peaks(smoothed, height=np.mean(smoothed) + np.std(smoothed) / 2,
-                          distance=int(0.2 * fs))
-    return peaks
+  
+    signal = np.array(signal)
+    peaks = []
+
+    threshold = np.mean(signal) + 0.5 * np.std(signal)
+
+    for i in range(1, len(signal) - 1):
+        if signal[i] > threshold and signal[i] > signal[i - 1] and signal[i] > signal[i + 1]:
+            peaks.append(i)
 
 
-def ecg_features(signal, peaks, fs=180):
-    features = {}
+    min_distance = int(0.2 * fs)
+    clean_peaks = []
+    last_peak = -min_distance
 
-    if len(peaks) == 0:
-        features["R_peaks"] = "No peaks detected"
-        return features
-
-    features["R amplitude"] = float(signal[peaks].max())
-
-    qrs_durations = []
     for p in peaks:
-        left = p
-        while left > 0 and signal[left] > signal[p] * 0.5:
-            left -= 1
-        right = p
-        while right < len(signal) - 1 and signal[right] > signal[p] * 0.5:
-            right += 1
-        qrs_durations.append((right - left) / fs * 1000)
+        if p - last_peak >= min_distance:
+            clean_peaks.append(p)
+            last_peak = p
 
-    features["QRS duration (ms)"] = float(np.mean(qrs_durations))
+    return np.array(clean_peaks)
 
-    if len(peaks) >= 2:
-        rr = np.diff(peaks) / fs * 1000
-        features["RR interval (ms)"] = float(np.mean(rr))
-        features["Heart Rate (bpm)"] = float(60000 / np.mean(rr))
-    else:
-        features["RR interval (ms)"] = "N/A"
-        features["Heart Rate (bpm)"] = "N/A"
-
-    return features
 
 
 # -------------------------------------------------
