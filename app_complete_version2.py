@@ -116,18 +116,18 @@ def detect_r_peaks(signal, fs=180):
             last = c
 
     return np.array(peaks)
+    
  def ecg_features(signal, peaks, fs=180):
-   
     features = {}
 
     if len(peaks) == 0:
         features["R_peaks"] = "No peaks detected"
         return features
 
-    
+    # Ampiezza R
     features["R amplitude"] = float(signal[peaks].max())
 
-    
+    # Durata QRS stimata (larghezza a metà altezza)
     qrs_durations = []
     for p in peaks:
         left = p
@@ -152,6 +152,7 @@ def detect_r_peaks(signal, fs=180):
         features["Heart Rate (bpm)"] = "N/A"
 
     return features
+
 
 
 
