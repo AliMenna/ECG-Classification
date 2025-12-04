@@ -81,31 +81,36 @@ CLASS_DESC = {
 
 
 # -------------------------------------------------
-# 4. R-PEAK DETECTION + CLINICAL FEATURES
+# R-PEAK DETECTION + CLINICAL ECG FEATURE EXTRACTION
 # -------------------------------------------------
+
 def detect_r_peaks(signal, fs=180):
-   
+    """
+    Detects R-peaks in an ECG signal without SciPy.
+    Simplified Pan-Tompkins-style method suitable for single-beat signals.
+    """
     signal = np.array(signal)
 
+    # 1. Derivative to emphasize steep QRS slopes
     diff = np.diff(signal, prepend=signal[0])
 
-   
+    # 2. Squaring to enhance large slopes
     squared = diff ** 2
 
-    # 3. Moving window integration 
+    # 3. Moving window integration (window ~ 5 samples)
     window = 5
-    integrated = np.convolve(squared, np.ones(window)/window, mode='same')
+    integrated = np.convolve(squared, np.ones(window) / window, mode='same')
 
-    # 4. Threshold dinamic
+    # 4. Dynamic threshold based on signal statistics
     threshold = np.mean(integrated) + 0.5 * np.std(integrated)
 
-
+    # 5. Find local maxima above threshold
     candidates = []
     for i in range(1, len(integrated) - 1):
-        if integrated[i] > threshold and integrated[i] > integrated[i-1] and integrated[i] > integrated[i+1]:
+        if integrated[i] > threshold and integrated[i] > integrated[i - 1] and integrated[i] > integrated[i + 1]:
             candidates.append(i)
 
-   
+    # 6. Keep only one peak per 200 ms to avoid duplicates
     min_distance = int(0.2 * fs)
     peaks = []
     last = -min_distance
@@ -116,18 +121,28 @@ def detect_r_peaks(signal, fs=180):
             last = c
 
     return np.array(peaks)
-    
- def ecg_features(signal, peaks, fs=180):
+
+
+
+def ecg_features(signal, peaks, fs=180):
+    """
+    Extracts basic clinical ECG features:
+    - R amplitude
+    - QRS duration (ms)
+    - RR interval (ms)
+    - Heart rate (bpm)
+    """
     features = {}
 
+    # No detected peaks
     if len(peaks) == 0:
         features["R_peaks"] = "No peaks detected"
         return features
 
-    # Ampiezza R
+    # R-peak amplitude
     features["R amplitude"] = float(signal[peaks].max())
 
-    # Durata QRS stimata (larghezza a metà altezza)
+    # Estimate QRS duration using half-height width
     qrs_durations = []
     for p in peaks:
         left = p
@@ -142,7 +157,7 @@ def detect_r_peaks(signal, fs=180):
 
     features["QRS duration (ms)"] = float(np.mean(qrs_durations))
 
-    # RR interval e HR
+    # RR interval and heart rate (only if ≥2 peaks)
     if len(peaks) >= 2:
         rr = np.diff(peaks) / fs * 1000
         features["RR interval (ms)"] = float(np.mean(rr))
@@ -152,8 +167,6 @@ def detect_r_peaks(signal, fs=180):
         features["Heart Rate (bpm)"] = "N/A"
 
     return features
-
-
 
 
 
