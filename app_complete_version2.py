@@ -93,47 +93,47 @@ def grad_cam_1d(model, x, target_class):
     activations = {}
     gradients = {}
 
-    # Hook sul layer PRIMA del MaxPool finale:
-    target_layer = model.conv3
-
+    # Hook SULL'OUTPUT DI bn3 + relu, non su conv3!
     def forward_hook(module, inp, out):
         activations["value"] = out
 
     def backward_hook(module, grad_in, grad_out):
         gradients["value"] = grad_out[0]
 
-    h1 = target_layer.register_forward_hook(forward_hook)
-    h2 = target_layer.register_backward_hook(backward_hook)
+    # Qui mettiamo gli hook sul blocco completo conv3→bn3→relu
+    handle_f = model.bn3.register_forward_hook(forward_hook)
+    handle_b = model.bn3.register_backward_hook(backward_hook)
 
     # Forward
     x = x.clone().detach().requires_grad_(True)
     output = model(x)
     loss = output[0, target_class]
+
+    # Backward
     model.zero_grad()
-    loss.backward()
+    loss.backward(retain_graph=True)
 
-
-    acts = activations["value"]          # (1, C, L)
-    grads = gradients["value"]           # (1, C, L)
+    # Attivazioni e gradienti
+    acts = activations["value"].detach()      # (1, C, L)
+    grads = gradients["value"].detach()       # (1, C, L)
 
     # GAP
-    weights = grads.mean(dim=2, keepdim=True)   # (1, C, 1)
+    weights = grads.mean(dim=2, keepdim=True)  # (1, C, 1)
 
-    # CAM 
-    cam = (weights * acts).sum(dim=1).relu()     # (1, L)
-    cam = cam.squeeze().detach().cpu().numpy()
+    # Weighted sum
+    cam = (weights * acts).sum(dim=1).relu()    # (1, L)
+    cam = cam.squeeze().cpu().numpy()
 
-    # NORMALIZATION
+    # Normalize
     cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
 
-    # INTERPOLATION
+    # Upsample to 180
     cam = np.interp(np.linspace(0, 1, 180),
                     np.linspace(0, 1, len(cam)),
                     cam)
 
-    # Remove hooks
-    h1.remove()
-    h2.remove()
+    handle_f.remove()
+    handle_b.remove()
 
     return cam
 
