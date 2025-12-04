@@ -84,63 +84,6 @@ CLASS_DESC = {
 }
 
 
-# -------------------------------------------------
-# 3. GRAD-CAM 1D IMPLEMENTATION
-# -------------------------------------------------
-def smooth_grad_cam_1d(model, x, target_class, n_samples=40, noise=0.1):
-    model.eval()
-
-    cams = []
-
-    for _ in range(n_samples):
-        # Noise
-        noise_tensor = noise * torch.randn_like(x)
-        x_noisy = x + noise_tensor
-
-        # Calcolo CAM standard
-        activations = {}
-        gradients = {}
-
-        def forward_hook(module, inp, out):
-            activations["value"] = out
-
-        def backward_hook(module, grad_in, grad_out):
-            gradients["value"] = grad_out[0]
-
-        handle_f = model.bn3.register_forward_hook(forward_hook)
-        handle_b = model.bn3.register_backward_hook(backward_hook)
-
-        x_noisy = x_noisy.clone().detach().requires_grad_(True)
-        output = model(x_noisy)
-        loss = output[0, target_class]
-        model.zero_grad()
-        loss.backward(retain_graph=True)
-
-        acts = activations["value"]
-        grads = gradients["value"]
-
-        # CAM singola
-        cam = (acts * grads.relu()).sum(dim=1).relu().squeeze().detach().cpu().numpy()
-
-        handle_f.remove()
-        handle_b.remove()
-
-        # Normalizza
-        cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
-        cams.append(cam)
-
-    # Media dei CAM → SmoothGrad CAM
-    cam_avg = np.mean(cams, axis=0)
-
-    # Upsample a 180 punti
-    cam_resampled = np.interp(
-        np.linspace(0, 1, 180),
-        np.linspace(0, 1, len(cam_avg)),
-        cam_avg
-    )
-
-    return cam_resampled
-
 
 
 # -------------------------------------------------
@@ -259,27 +202,6 @@ if uploaded_file is not None:
                         with col_right:
                             st.markdown(f"**Predicted class:** `{CLASS_LABELS[pred_class]}`")
                             st.info(CLASS_DESC[CLASS_LABELS[pred_class]])
-
-                        # GRAD-CAM visualization
-                        st.markdown("### 🧠 Model Attention (Grad-CAM 1D)")
-                        cam = smooth_grad_cam_1d(model, x, pred_class)
-
-
-                        fig_cam = go.Figure()
-                        fig_cam.add_trace(go.Scatter(y=signal, mode="lines", name="ECG Signal", line=dict(color="black")))
-                        fig_cam.add_trace(go.Scatter(
-                            y=(signal.max() - signal.min()) * cam + signal.min(),
-                            mode="lines",
-                            name="Grad-CAM Importance",
-                            line=dict(color="red")
-                        ))
-                        fig_cam.update_layout(
-                            title="ECG Signal with Model Attention (Grad-CAM)",
-                            xaxis_title="Samples",
-                            yaxis_title="Amplitude / Importance",
-                            height=300
-                        )
-                        st.plotly_chart(fig_cam, use_container_width=True)
 
                     except Exception as e:
                         st.error(f"⚠️ Error during classification: {e}")
