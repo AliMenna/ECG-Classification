@@ -87,48 +87,60 @@ CLASS_DESC = {
 # -------------------------------------------------
 # 3. GRAD-CAM 1D IMPLEMENTATION
 # -------------------------------------------------
-def layercam_1d(model, x, target_class):
+def smooth_grad_cam_1d(model, x, target_class, n_samples=40, noise=0.1):
     model.eval()
 
-    activations = {}
-    gradients = {}
+    cams = []
 
-    # Usiamo conv3 MA dopo la ReLU, come LayerCAM richiede
-    def forward_hook(module, inp, out):
-        activations["value"] = out
+    for _ in range(n_samples):
+        # Noise
+        noise_tensor = noise * torch.randn_like(x)
+        x_noisy = x + noise_tensor
 
-    def backward_hook(module, grad_in, grad_out):
-        gradients["value"] = grad_out[0]
+        # Calcolo CAM standard
+        activations = {}
+        gradients = {}
 
-    handle_f = model.bn3.register_forward_hook(forward_hook)
-    handle_b = model.bn3.register_backward_hook(backward_hook)
+        def forward_hook(module, inp, out):
+            activations["value"] = out
 
-    x = x.clone().detach().requires_grad_(True)
-    output = model(x)
-    loss = output[0, target_class]
+        def backward_hook(module, grad_in, grad_out):
+            gradients["value"] = grad_out[0]
 
-    model.zero_grad()
-    loss.backward(retain_graph=True)
+        handle_f = model.bn3.register_forward_hook(forward_hook)
+        handle_b = model.bn3.register_backward_hook(backward_hook)
 
-    acts = activations["value"]          # (1, C, L)
-    grads = gradients["value"]           # (1, C, L)
+        x_noisy = x_noisy.clone().detach().requires_grad_(True)
+        output = model(x_noisy)
+        loss = output[0, target_class]
+        model.zero_grad()
+        loss.backward(retain_graph=True)
 
-    # LayerCAM: attivazioni * ReLU(grad)
-    cam = (acts * grads.relu()).sum(dim=1)  # (1, L)
-    cam = cam.squeeze().detach().cpu().numpy()
+        acts = activations["value"]
+        grads = gradients["value"]
 
-    # Normalizzazione
-    cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
+        # CAM singola
+        cam = (acts * grads.relu()).sum(dim=1).relu().squeeze().detach().cpu().numpy()
+
+        handle_f.remove()
+        handle_b.remove()
+
+        # Normalizza
+        cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
+        cams.append(cam)
+
+    # Media dei CAM → SmoothGrad CAM
+    cam_avg = np.mean(cams, axis=0)
 
     # Upsample a 180 punti
-    cam = np.interp(np.linspace(0, 1, 180),
-                    np.linspace(0, 1, len(cam)),
-                    cam)
+    cam_resampled = np.interp(
+        np.linspace(0, 1, 180),
+        np.linspace(0, 1, len(cam_avg)),
+        cam_avg
+    )
 
-    handle_f.remove()
-    handle_b.remove()
+    return cam_resampled
 
-    return cam
 
 
 # -------------------------------------------------
@@ -250,7 +262,8 @@ if uploaded_file is not None:
 
                         # GRAD-CAM visualization
                         st.markdown("### 🧠 Model Attention (Grad-CAM 1D)")
-                        cam = grad_cam_1d(model, x, pred_class)
+                        cam = smooth_grad_cam_1d(model, x, pred_class)
+
 
                         fig_cam = go.Figure()
                         fig_cam.add_trace(go.Scatter(y=signal, mode="lines", name="ECG Signal", line=dict(color="black")))
