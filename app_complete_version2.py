@@ -84,27 +84,75 @@ CLASS_DESC = {
 # 4. R-PEAK DETECTION + CLINICAL FEATURES
 # -------------------------------------------------
 def detect_r_peaks(signal, fs=180):
-  
+   
     signal = np.array(signal)
-    peaks = []
 
-    threshold = np.mean(signal) + 0.5 * np.std(signal)
+    diff = np.diff(signal, prepend=signal[0])
 
-    for i in range(1, len(signal) - 1):
-        if signal[i] > threshold and signal[i] > signal[i - 1] and signal[i] > signal[i + 1]:
-            peaks.append(i)
+   
+    squared = diff ** 2
+
+    # 3. Moving window integration 
+    window = 5
+    integrated = np.convolve(squared, np.ones(window)/window, mode='same')
+
+    # 4. Threshold dinamic
+    threshold = np.mean(integrated) + 0.5 * np.std(integrated)
 
 
+    candidates = []
+    for i in range(1, len(integrated) - 1):
+        if integrated[i] > threshold and integrated[i] > integrated[i-1] and integrated[i] > integrated[i+1]:
+            candidates.append(i)
+
+   
     min_distance = int(0.2 * fs)
-    clean_peaks = []
-    last_peak = -min_distance
+    peaks = []
+    last = -min_distance
 
+    for c in candidates:
+        if c - last >= min_distance:
+            peaks.append(c)
+            last = c
+
+    return np.array(peaks)
+ def ecg_features(signal, peaks, fs=180):
+   
+    features = {}
+
+    if len(peaks) == 0:
+        features["R_peaks"] = "No peaks detected"
+        return features
+
+    
+    features["R amplitude"] = float(signal[peaks].max())
+
+    
+    qrs_durations = []
     for p in peaks:
-        if p - last_peak >= min_distance:
-            clean_peaks.append(p)
-            last_peak = p
+        left = p
+        while left > 0 and signal[left] > signal[p] * 0.5:
+            left -= 1
 
-    return np.array(clean_peaks)
+        right = p
+        while right < len(signal) - 1 and signal[right] > signal[p] * 0.5:
+            right += 1
+
+        qrs_durations.append((right - left) / fs * 1000)
+
+    features["QRS duration (ms)"] = float(np.mean(qrs_durations))
+
+    # RR interval e HR
+    if len(peaks) >= 2:
+        rr = np.diff(peaks) / fs * 1000
+        features["RR interval (ms)"] = float(np.mean(rr))
+        features["Heart Rate (bpm)"] = float(60000 / np.mean(rr))
+    else:
+        features["RR interval (ms)"] = "N/A"
+        features["Heart Rate (bpm)"] = "N/A"
+
+    return features
+
 
 
 
